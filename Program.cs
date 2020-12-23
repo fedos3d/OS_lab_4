@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Data.Common;
 using System.IO;
 using System.Linq;
 using System.Reflection.PortableExecutable;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Transactions;
 using Microsoft.VisualBasic.CompilerServices;
 
@@ -36,11 +40,11 @@ namespace OS_lab4
         public static String fileName = "";
         public static String Arch = "architecture: ";
         public static String Bitnost = "file type: ";
+        public static SectionHeader[] sectionHeaders;
         static void Main(string[] args)
         {
             //string kek = Console.ReadLine();
             //Console.WriteLine(kek);
-            Console.WriteLine(UInt32.Parse(Convert.ToHexString(reverser(new byte[]{0x10, 0x00, 0x00, 0x00})), System.Globalization.NumberStyles.HexNumber));
             fileName = "77.exe";
             if (File.Exists(fileName))
             {
@@ -111,7 +115,6 @@ namespace OS_lab4
                                 setMagic(magic);
                                 var optionalHeader64 = new OptionalHeader64();
                                 var optionalHeader32 = new OptionalHeader32();
-                                Console.WriteLine("Reader cur pos: " + reader.BaseStream.Position);
                                 if (Convert.ToHexString(magic) == "010B" || Convert.ToHexString(magic) == "0107")
                                 {
                                     if32 = true;
@@ -168,7 +171,6 @@ namespace OS_lab4
                                 optionalHeader64.ImageBase = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
                                 optionalHeader64.SectionAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
                                 optionalHeader64.FileAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                Console.WriteLine("Reader cur pos: " + reader.BaseStream.Position);
                                 optionalHeader64.MajorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
                                 optionalHeader64.MinorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
                                 optionalHeader64.MajorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
@@ -186,7 +188,6 @@ namespace OS_lab4
                                 optionalHeader64.SizeOfHeapReserve = UInt64.Parse(
                                     Convert.ToHexString(reverser(reader.ReadBytes(8))),
                                     System.Globalization.NumberStyles.HexNumber);
-                                Console.WriteLine("Reader cur pos: " + reader.BaseStream.Position);
                                 optionalHeader64.SizeOfHeapCommit = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
                                 optionalHeader64.LoaderFlags = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
                                 optionalHeader64.NumberOfRvaAndSizes = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
@@ -206,7 +207,6 @@ namespace OS_lab4
                                 {
                                     n = optionalHeader64.NumberOfRvaAndSizes;
                                 }
-                                Console.WriteLine(n);
 
                                 DataDericotry[] dat = new DataDericotry[n];
                                 for (int i = 0; i < n; i++)
@@ -227,8 +227,27 @@ namespace OS_lab4
                                 {
                                     optionalHeader64._dataDericotry = dat;
                                 }
-                                Console.WriteLine("Test subsystem value: " + optionalHeader64.Subsystem);
-
+                                //now lets fill out section header
+                                sectionHeaders = new SectionHeader[fileheader.NumberOfSections];
+                                for (int i = 0; i < fileheader.NumberOfSections; i++)
+                                {
+                                    var newSectionHeader = new SectionHeader();
+                                    newSectionHeader.Name = reader.ReadBytes(8);
+                                    newSectionHeader.PhysicalAddress = newSectionHeader.VirtualSize =
+                                        UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),
+                                            System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.VirtualAddress = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), 
+                                        System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.SizeOfRawData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.PointerToRawData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.PointerToRelocations = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.PointerToLinenumbers = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.NumberOfRelocations = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.NumberOfLinenumbers = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    newSectionHeader.Characteristics = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    sectionHeaders[i] = newSectionHeader;
+                                }
+                                
                             }
                             showFinalOutput();
                         }
@@ -310,6 +329,90 @@ namespace OS_lab4
             Console.WriteLine("FileName: " + fileName);
             Console.WriteLine(Arch);
             Console.WriteLine(Bitnost);
+            if (sectionHeaders != null)
+            {
+                Console.WriteLine("Sections:");
+                for (int i = 0; i < sectionHeaders.Length; i++)
+                {
+                    Console.WriteLine("Section id: " + i + ", Section name: " + 
+                                      Encoding.Default.GetString(sectionHeaders[i].Name) + 
+                                      ", Section size: " + sectionHeaders[i].VirtualSize + 
+                                      ", VMA: " + sectionHeaders[i].VirtualAddress + 
+                                      ", LMA: " + sectionHeaders[i].VirtualAddress + ", " + calcChars(sectionHeaders[i].Characteristics));
+                }
+            }
+        }
+
+        static string calcChars(uint lol)
+        {
+            var kek = lol;
+            bool ifcode = (kek & 0x20) != 0;
+            bool ifinitdata = (kek & 0x40) != 0;
+            bool ifuninitdata = (kek & 0x80) != 0;
+            bool ifdicardable = (kek & 0x02000000) != 0;
+            bool ifnotcached = (kek & 0x04000000) != 0;
+            bool ifnotpaged = (kek & 0x08000000) != 0;
+            bool ifmemshared = (kek & 0x10000000) != 0;
+            bool ifexecute = (kek & 0x20000000) != 0;
+            bool ifread = (kek & 0x40000000) != 0;
+            bool ifwrite = (kek & 0x80000000) != 0;
+            String res = "Section characteristics: ";
+            if (ifcode)
+            {
+                res += "Code section, ";
+            }
+
+            if (ifinitdata)
+            {
+                res += "Initialized data section, ";
+            }
+
+            if (ifuninitdata)
+            {
+                res += "Uninitialized data section, ";
+            }
+
+            if (ifdicardable)
+            {
+                res += "DISCARDABLE, ";
+            }
+
+            if (ifnotcached)
+            {
+                res += "NOT_CACHED, ";
+            }
+
+            if (ifnotpaged)
+            {
+                res += "NOT_PAGED, ";
+            }
+
+            if (ifmemshared)
+            {
+                res += "MEM_SHARED, ";
+            }
+
+            if (ifexecute)
+            {
+                res += "EXECUTE, ";
+            }
+
+            if (ifread)
+            {
+                res += "READ, ";
+            }
+
+            if (ifwrite)
+            {
+                res += "WRITE, ";
+            }
+
+            if (res[res.Length - 1] == ',')
+            {
+                res.Substring(0, res.Length - 2);
+            }
+
+            return res;
         }
 
         static byte[] reverser(byte[] arr)
@@ -404,6 +507,22 @@ namespace OS_lab4
     {
         public uint VirtualAddress;
         public uint Size;
+    }
+
+    class SectionHeader
+    {
+        public byte[] Name;
+        public uint PhysicalAddress;
+        public uint VirtualSize; //same as prev (do not read twice for that)
+        public uint VirtualAddress;
+        public uint SizeOfRawData;
+        public uint PointerToRawData;
+        public uint PointerToRelocations;
+        public uint PointerToLinenumbers;
+        public ushort NumberOfRelocations;
+        public ushort NumberOfLinenumbers;
+        public uint Characteristics;
+
     }
 
     class SomethingWentWrongException : Exception
