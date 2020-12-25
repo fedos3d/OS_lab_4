@@ -6,7 +6,10 @@ using System.IO;
 using System.Linq;
 using System.Reflection.PortableExecutable;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Security.Authentication.ExtendedProtection;
 using System.Text;
+using System.Threading;
 using System.Transactions;
 using Microsoft.VisualBasic.CompilerServices;
 
@@ -32,20 +35,62 @@ namespace OS_lab4
         public const int IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT = 13; 
         public const int IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR = 14;
         
+        //flags
+        public static bool showReloc = false;
+        public static bool showSections = false;
+        public static bool showHeaderInfo = false;
+        public static bool showSymbolsInfo = false;
+        public static bool showImportExportInfo = false;
+
         
-        
-        
-        
+        public static bool hassymbols = false;
         public static bool if32 = false;
         public static String fileName = "";
         public static String Arch = "architecture: ";
         public static String Bitnost = "file type: ";
         public static SectionHeader[] sectionHeaders;
+        public static uint alingment = 0;
+        public static FileHeader fileheader;
+        public static OptionalHeader64 optionalHeader64 = new OptionalHeader64();
+        public static OptionalHeader32 optionalHeader32 = new OptionalHeader32();
+        
+        public static SymbolTable[] SymbolTables;
+        public static List<BaseRelocationBlock> baseRelocationBlocks = new List<BaseRelocationBlock>();
+        
         static void Main(string[] args)
         {
-            //string kek = Console.ReadLine();
+            //Console.WriteLine("Enter name of your file: ");
+            string kek;
+            //Console.ReadLine();
+            kek = "64.exe";
             //Console.WriteLine(kek);
-            fileName = "77.exe";
+            fileName = kek;
+            Console.WriteLine("Set params: (r - show relocation, s - show sections info, f - show header info, t - show symbols info, p - show import and export info) Example: rsftp - will show everything (!Leave empty for basic info)");
+            String paramss = Console.ReadLine();
+            if (paramss.Contains('r'))
+            {
+                showReloc = true;
+            }
+
+            if (paramss.Contains('s'))
+            {
+                showSections = true;
+            }
+
+            if (paramss.Contains('f'))
+            {
+                showHeaderInfo = true;
+            }
+
+            if (paramss.Contains('t'))
+            {
+                showSymbolsInfo = true;
+            }
+
+            if (paramss.Contains('p'))
+            {
+                showImportExportInfo = true;
+            }
             if (File.Exists(fileName))
             {
                 if (File.ReadAllBytes(fileName).Length != 0)
@@ -59,25 +104,22 @@ namespace OS_lab4
                         }
                         if (checkExecutable(e_magic))
                         {
-                            //debug Console.WriteLine("Yes, it's a PE file");
                             var e_lfanew = new byte[4]; //here we read our pe offest it's a PE offset
+                            
                             reader.BaseStream.Seek(60, SeekOrigin.Begin);
                             reader.Read(e_lfanew, 0, 4);
                             Array.Reverse(e_lfanew);
                             long offset = Int32.Parse(Convert.ToHexString(e_lfanew),
                                 System.Globalization.NumberStyles.HexNumber);
-                            //debug Console.WriteLine("PE offset in dec: " + offset); 
-                            
+
                             //now let's double check that it's a PE file by checking signature
-                            
                             var signature = new byte[4];
-                            reader.BaseStream.Seek(440, SeekOrigin.Begin);
+                            reader.BaseStream.Seek(offset, SeekOrigin.Begin);
                             reader.Read(signature, 0, 4);
                             if (checkSignature(signature))
                             {
-                                //debug Console.WriteLine("Double check is done, it's a pe file");
                                 //here we fill our header file
-                                var fileheader = new FileHeader(); //let's create file header
+                                fileheader = new FileHeader(); //let's create file header
                                 //machine type:
                                 var machine = new byte[2];
                                 reader.Read(machine, 0, 2);
@@ -92,106 +134,102 @@ namespace OS_lab4
                                 fileheader.NumberOfSections = UInt16.Parse(Convert.ToHexString(numofsec),
                                     System.Globalization.NumberStyles.HexNumber);
                                 //size of optional header
-                                var sizeofoptheader = new byte[2];
-                                reader.BaseStream.Seek(12, SeekOrigin.Current);
-                                reader.Read(sizeofoptheader, 0, 2);
-                                Array.Reverse(sizeofoptheader);
-                                //debug Console.WriteLine(Convert.ToHexString(sizeofoptheader));
-                                fileheader.SizeOfOptionalHeader = UInt16.Parse(Convert.ToHexString(sizeofoptheader),
-                                    System.Globalization.NumberStyles.HexNumber);
-                                //debug Console.WriteLine(fileheader.SizeOfOptionalHeader);
-                                //characteristics
-                                var chara = new byte[2];
-                                reader.Read(chara, 0, 2);
-                                Array.Reverse(chara);
-                                fileheader.Characteristics = UInt16.Parse(Convert.ToHexString(sizeofoptheader),
-                                    System.Globalization.NumberStyles.HexNumber);
-                                
-                                //now well be filling out OPTIONAL HEADER
-                                
-                                //var optionalHeader = new OptionalHeader32();
-                                var magic = reader.ReadBytes(2);
-                                Array.Reverse(magic);
-                                setMagic(magic);
-                                var optionalHeader64 = new OptionalHeader64();
-                                var optionalHeader32 = new OptionalHeader32();
-                                if (Convert.ToHexString(magic) == "010B" || Convert.ToHexString(magic) == "0107")
+                                fileheader.TimeDateStamp = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                fileheader.PointerToSymbolTable = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                fileheader.NumberOfSymbols = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                if (fileheader.PointerToSymbolTable != 0)
                                 {
+                                    hassymbols = true;
+                                }
+                                    var sizeofoptheader = new byte[2];
+                                    reader.Read(sizeofoptheader, 0, 2);
+                                    Array.Reverse(sizeofoptheader);
+                                    fileheader.SizeOfOptionalHeader = UInt16.Parse(Convert.ToHexString(sizeofoptheader),
+                                    System.Globalization.NumberStyles.HexNumber);
+                                    //characteristics
+                                    var chara = new byte[2];
+                                    reader.Read(chara, 0, 2);
+                                    Array.Reverse(chara);
+                                    fileheader.Characteristics = UInt16.Parse(Convert.ToHexString(sizeofoptheader),
+                                    System.Globalization.NumberStyles.HexNumber);
+                                
+                                    //now well be filling out OPTIONAL HEADER
+                                
+                                    var magic = reader.ReadBytes(2);
+                                    Array.Reverse(magic);
+                                    setMagic(magic);
+                                    if (Convert.ToHexString(magic) == "010B" || Convert.ToHexString(magic) == "0107")
+                                    {
                                     if32 = true;
-                                    
                                     optionalHeader32.Magic = UInt16.Parse(Convert.ToHexString(reverser(magic)),
                                     System.Globalization.NumberStyles.HexNumber);
-                                
-                                optionalHeader32.MajorLinkerVersion = reader.ReadByte(); //major linker version
-                                optionalHeader32.MinorLinkerVersion = reader.ReadByte(); //minor linker version
-                                optionalHeader32.SizeOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfInitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfUninitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.AddressOfEntryPoint = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.BaseOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.BaseOfData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.ImageBase = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SectionAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.FileAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.MajorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.MinorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.MajorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.MinorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.MajorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.MinorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.Win32VersionValue = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfImage = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfHeaders = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.CheckSum = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.Subsystem = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.DllCharacteristics = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfStackReserve = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfStackCommit = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfHeapReserve = UInt32.Parse(
-                                    Convert.ToHexString(reverser(reader.ReadBytes(4))),
-                                    System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.SizeOfHeapCommit = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.LoaderFlags = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader32.NumberOfRvaAndSizes = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MajorLinkerVersion = reader.ReadByte(); //major linker version
+                                    optionalHeader32.MinorLinkerVersion = reader.ReadByte(); //minor linker version
+                                    optionalHeader32.SizeOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfInitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfUninitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.AddressOfEntryPoint = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.BaseOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.BaseOfData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.ImageBase = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SectionAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.FileAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MajorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MinorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MajorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MinorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MajorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.MinorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.Win32VersionValue = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfImage = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfHeaders = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.CheckSum = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.Subsystem = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.DllCharacteristics = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfStackReserve = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfStackCommit = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfHeapReserve = UInt32.Parse(
+                                        Convert.ToHexString(reverser(reader.ReadBytes(4))),
+                                        System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.SizeOfHeapCommit = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.LoaderFlags = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader32.NumberOfRvaAndSizes = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
                                 
                                 } else if (Convert.ToHexString(magic) == "020B")
                                 {
                                     if32 = false;
                                     optionalHeader64.Magic = UInt16.Parse(Convert.ToHexString(reverser(magic)),
                                     System.Globalization.NumberStyles.HexNumber);
-                                    
-                                
-                                optionalHeader64.MajorLinkerVersion = reader.ReadByte(); //major linker version
-                                optionalHeader64.MinorLinkerVersion = reader.ReadByte(); //minor linker version
-                                optionalHeader64.SizeOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfInitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfUninitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.AddressOfEntryPoint = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.BaseOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.ImageBase = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SectionAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.FileAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.MajorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.MinorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.MajorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.MinorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.MajorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.MinorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.Win32VersionValue = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfImage = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfHeaders = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.CheckSum = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.Subsystem = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.DllCharacteristics = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfStackReserve = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfStackCommit = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfHeapReserve = UInt64.Parse(
-                                    Convert.ToHexString(reverser(reader.ReadBytes(8))),
-                                    System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.SizeOfHeapCommit = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.LoaderFlags = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                optionalHeader64.NumberOfRvaAndSizes = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                
+                                    optionalHeader64.MajorLinkerVersion = reader.ReadByte(); //major linker version
+                                    optionalHeader64.MinorLinkerVersion = reader.ReadByte(); //minor linker version
+                                    optionalHeader64.SizeOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfInitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfUninitializedData = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.AddressOfEntryPoint = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.BaseOfCode = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.ImageBase = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SectionAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.FileAlignment = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.MajorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.MinorOperatingSystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.MajorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.MinorImageVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.MajorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.MinorSubsystemVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.Win32VersionValue = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfImage = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfHeaders = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.CheckSum = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.Subsystem = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.DllCharacteristics = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfStackReserve = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfStackCommit = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfHeapReserve = UInt64.Parse(
+                                        Convert.ToHexString(reverser(reader.ReadBytes(8))),
+                                        System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.SizeOfHeapCommit = UInt64.Parse(Convert.ToHexString(reverser(reader.ReadBytes(8))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.LoaderFlags = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    optionalHeader64.NumberOfRvaAndSizes = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
                                 }
                                 else
                                 {
@@ -207,12 +245,13 @@ namespace OS_lab4
                                 {
                                     n = optionalHeader64.NumberOfRvaAndSizes;
                                 }
-
                                 DataDericotry[] dat = new DataDericotry[n];
                                 for (int i = 0; i < n; i++)
                                 {
-                                    uint va = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
-                                    uint sz = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                    uint va = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),
+                                        System.Globalization.NumberStyles.HexNumber);
+                                    uint sz = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))),
+                                        System.Globalization.NumberStyles.HexNumber);
                                     var lol = new DataDericotry();
                                     lol.Size = sz;
                                     lol.VirtualAddress = va;
@@ -227,7 +266,7 @@ namespace OS_lab4
                                 {
                                     optionalHeader64._dataDericotry = dat;
                                 }
-                                //now lets fill out section header
+                                //now lets fill out section headers
                                 sectionHeaders = new SectionHeader[fileheader.NumberOfSections];
                                 for (int i = 0; i < fileheader.NumberOfSections; i++)
                                 {
@@ -247,14 +286,140 @@ namespace OS_lab4
                                     newSectionHeader.Characteristics = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
                                     sectionHeaders[i] = newSectionHeader;
                                 }
-                                
+                                if (if32)
+                                {
+                                    alingment = optionalHeader32.SectionAlignment;
+                                }
+                                else
+                                {
+                                    alingment = optionalHeader64.SectionAlignment;
+                                }
+                                //somewhre here i should read symbol table //TODO:reading symbol table
+                                if (fileheader.PointerToSymbolTable != 0)
+                                {
+                                    SymbolTables = new SymbolTable[fileheader.NumberOfSymbols];
+                                    var curpos = reader.BaseStream.Position;
+                                    reader.BaseStream.Seek(fileheader.PointerToSymbolTable, SeekOrigin.Begin);
+                                    for (int i = 0; i < fileheader.NumberOfSymbols; i++)
+                                    {
+                                        var cur = new SymbolTable();
+                                        cur.Name = reader.ReadBytes(8);
+                                        cur.Value = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                        cur.SectionNumber = Int16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                        cur.Type = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                        cur.StorageClass = Byte.Parse(Convert.ToHexString(reverser(reader.ReadBytes(1))), System.Globalization.NumberStyles.HexNumber);
+                                        cur.NumberOfAuxSymbols = Byte.Parse(Convert.ToHexString(reverser(reader.ReadBytes(1))), System.Globalization.NumberStyles.HexNumber);
+                                        SymbolTables[i] = cur;
+                                    }
+                                    reader.BaseStream.Position = curpos;
+                                }
+                                //now let's read relocation info
+                                var RAWOFRELOC = rvaToOff(sectionHeaders[6].VirtualAddress);
+                                var curpsss = reader.BaseStream.Position;
+                                reader.BaseStream.Seek(RAWOFRELOC, SeekOrigin.Begin);
+                                var relocsize = sectionHeaders[6].SizeOfRawData;
+                                if (showReloc)
+                                {
+                                    while (relocsize != 0)
+                                    {
+                                        var cur = new BaseRelocationBlock();
+                                        var pageRva = cur.PageRVA = UInt32.Parse(
+                                            Convert.ToHexString(reverser(reader.ReadBytes(4))),
+                                            System.Globalization.NumberStyles.HexNumber);
+                                        var BlockSize = cur.BlockSize = UInt32.Parse(
+                                            Convert.ToHexString(reverser(reader.ReadBytes(4))),
+                                            System.Globalization.NumberStyles.HexNumber);
+                                        if (BlockSize == 0)
+                                        {
+                                            break;
+                                        }
+                                        ushort[] relocentries =
+                                            new ushort[(BlockSize - 8) / 2];
+                                        for (int i = 0; i < relocentries.Length; i++)
+                                        {
+                                            relocentries[i] =
+                                                UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))),
+                                                    System.Globalization.NumberStyles.HexNumber);
+                                        }
+                                        cur.entries = relocentries;
+                                        relocsize -= BlockSize;
+                                        Console.WriteLine("Virtual Address: " + cur.PageRVA + " Chunk Size: " +
+                                                          cur.BlockSize + " Number of fixups: " + cur.entries.Length);
+                                        for (int j = 0; j < cur.entries.Length; j++)
+                                        {
+                                            Console.Write("reloc: " + j + " offset: " + (cur.entries[j] & 0xFFF));
+                                            var type = (cur.entries[j] & 0xF000) >> 12;
+                                            switch (type)
+                                            {
+                                                case 0:
+                                                    Console.WriteLine(" BASED_ABSOLUTE");
+                                                    break;
+                                                case 1:
+                                                    Console.WriteLine(" BASED_HIGH");
+                                                    break;
+                                                case 2:
+                                                    Console.WriteLine(" BASED_LOW");
+                                                    break;
+                                                case 3:
+                                                    Console.WriteLine(" BASED_HIGHLOW");
+                                                    break;
+                                                case 4:
+                                                    Console.WriteLine(" BASED_HIGHADJ");
+                                                    break;
+                                                case 5:
+                                                    Console.WriteLine(" BASED_ARM_MOV32");
+                                                    break;
+                                                case 7:
+                                                    Console.WriteLine(" BASED_RISCV_LOW12I");
+                                                    break;
+                                                case 8:
+                                                    Console.WriteLine(" BASED_RISCV_LOW12S");
+                                                    break;
+                                                case 9:
+                                                    Console.WriteLine(" BASED_MIPS_JMPADDR16");
+                                                    break;
+                                                case 10:
+                                                    Console.WriteLine(" BASED_DIR64");
+                                                    break;
+                                            }
+                                        }
+                                    }
+                                }
+                                //here well read export and import tables
+                                //Export DIR INFO //TODO: ADD EXPORT INFO DIR
+                                //let's start with export dir
+                                uint exportRAW = 0;
+                                if (if32)
+                                {
+                                    exportRAW = rvaToOff(optionalHeader32._dataDericotry[0].VirtualAddress);
+                                }
+                                else
+                                {
+                                    exportRAW = rvaToOff(optionalHeader64._dataDericotry[0].VirtualAddress);
+                                }
+                                var curposs = reader.BaseStream.Position;
+                                reader.BaseStream.Seek(exportRAW, SeekOrigin.Begin);
+                                var ExportDir = new ExportDirectory();
+                                ExportDir.Characteristics = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.TimeDateStamp = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.MajorVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.MinorVersion = UInt16.Parse(Convert.ToHexString(reverser(reader.ReadBytes(2))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.Name = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.Base = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.NumberOfFunctions = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.NumberOfNames = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.AddressOfFunctions = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.AddressOfNames = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                ExportDir.AddressOfNameOrdinals = ExportDir.AddressOfNames = UInt32.Parse(Convert.ToHexString(reverser(reader.ReadBytes(4))), System.Globalization.NumberStyles.HexNumber);
+                                reader.BaseStream.Position = curposs;
+                                //IMPORT DIR INFO //TODO: ADD IMPORT INFO DIR
                             }
                             showFinalOutput();
                         }
                         else
                         {
                             Console.WriteLine("No, it's not a PE file, bye bye");
-                            System.Environment.Exit(0);
+                            Environment.Exit(0);
                         }
                     }
                 }
@@ -329,18 +494,142 @@ namespace OS_lab4
             Console.WriteLine("FileName: " + fileName);
             Console.WriteLine(Arch);
             Console.WriteLine(Bitnost);
-            if (sectionHeaders != null)
+            if (showHeaderInfo)
             {
-                Console.WriteLine("Sections:");
-                for (int i = 0; i < sectionHeaders.Length; i++)
+                calcFlags();
+                if (if32)
                 {
-                    Console.WriteLine("Section id: " + i + ", Section name: " + 
-                                      Encoding.Default.GetString(sectionHeaders[i].Name) + 
-                                      ", Section size: " + sectionHeaders[i].VirtualSize + 
-                                      ", VMA: " + sectionHeaders[i].VirtualAddress + 
-                                      ", LMA: " + sectionHeaders[i].VirtualAddress + ", " + calcChars(sectionHeaders[i].Characteristics));
+                    Console.WriteLine("Start address: " + (optionalHeader32.AddressOfEntryPoint + optionalHeader32.ImageBase));
+                }
+                else
+                {
+                    Console.WriteLine("Start address: " + (optionalHeader64.ImageBase + optionalHeader64.AddressOfEntryPoint));
                 }
             }
+
+            if (showSymbolsInfo)
+            {
+                calcSymbols();
+            }
+            if (showSections)
+            {
+                if (sectionHeaders != null)
+                {
+                    Console.WriteLine("Sections:");
+                    for (int i = 0; i < sectionHeaders.Length; i++)
+                    {
+                        Console.WriteLine("Section id: " + i + ", Section name: " +
+                                          Encoding.Default.GetString(sectionHeaders[i].Name) +
+                                          ", Section size: " + sectionHeaders[i].VirtualSize +
+                                          ", VMA: " + sectionHeaders[i].VirtualAddress +
+                                          ", LMA: " + sectionHeaders[i].VirtualAddress + ", File off: " + sectionHeaders[i].PointerToRawData + ", " +
+                                          calcChars(sectionHeaders[i].Characteristics));
+                    }
+                }
+            }
+
+            if (showImportExportInfo)
+            {
+                calcImportExportInfo();
+            }
+        }
+
+        static void calcFlags()
+        {
+            var kek = fileheader.Characteristics;
+            bool RELOCS_STRIPPED = (kek & 0x0001) != 0;
+            bool EXECUTABLE_IMAGE = (kek & 0x0002) != 0;
+            bool LINE_NUMS_STRIPPED = (kek & 0x0004) != 0;
+            bool LOCAL_SYMS_STRIPPED = (kek & 0x0008) != 0;
+            bool AGGRESSIVE_WS_TRIM = (kek & 0x0010) != 0;
+            bool LARGE_ADDRESS_AWARE = (kek & 0x0020) != 0;
+            bool BYTES_REVERSED_LO = (kek & 0x0080) != 0;
+            bool _32BIT_MACHINE = (kek & 0x0100) != 0;
+            bool DEBUG_STRIPPED = (kek & 0x0200) != 0;
+            bool REMOVABLE_RUN_FROM_SWAP = (kek & 0x0400) != 0;
+            bool NET_RUN_FROM_SWAP = (kek & 0x0800) != 0;
+            bool SYSTEM = (kek & 0x1000) != 0;
+            bool DLL = (kek & 0x2000) != 0;
+            bool SYSTEM_ONLY = (kek & 0x4000) != 0;
+            bool BYTES_REVERSED_HI = (kek & 0x8000) != 0;
+            var ans = "FLAGS: ";
+            if (RELOCS_STRIPPED)
+            {
+                ans += "RELOCS_STRIPPED, ";
+            }
+
+            if (EXECUTABLE_IMAGE)
+            {
+                ans += "EXECUTABLE_IMAGE, ";
+            }
+
+            if (LINE_NUMS_STRIPPED)
+            {
+                ans += "LINE_NUMS_STRIPPED, ";
+            }
+
+            if (LOCAL_SYMS_STRIPPED)
+            {
+                ans += "LOCAL_SYMS_STRIPPED, ";
+            }
+
+            if (_32BIT_MACHINE)
+            {
+                ans += "32BIT_MACHINE, ";
+            }
+
+            if (AGGRESSIVE_WS_TRIM)
+            {
+                ans += "AGGRESSIVE_WS_TRIM, ";
+            }
+
+            if (LARGE_ADDRESS_AWARE)
+            {
+                ans += "LARGE_ADDRESS_AWARE, ";
+            }
+
+            if (BYTES_REVERSED_LO)
+            {
+                ans += "BYTES_REVERSED_LO, ";
+            }
+
+            if (BYTES_REVERSED_HI)
+            {
+                ans += "BYTES_REVERSED_HI, ";
+            }
+
+            if (DEBUG_STRIPPED)
+            {
+                ans += "DEBUG_STRIPPED, ";
+            }
+
+            if (REMOVABLE_RUN_FROM_SWAP)
+            {
+                ans += "REMOVABLE_RUN_FROM_SWAP, ";
+            }
+
+            if (NET_RUN_FROM_SWAP)
+            {
+                ans += "NET_RUN_FROM_SWAP, ";
+            }
+
+            if (SYSTEM)
+            {
+                ans += "SYSTEM, ";
+            }
+
+            if (DLL)
+            {
+                ans += "DLL, ";
+            }
+
+            if (SYSTEM_ONLY)
+            {
+                ans += "SYSTEM_ONLY, ";
+            }
+
+            ans = ans.Substring(0, ans.Length - 2);
+            Console.WriteLine(ans);
         }
 
         static string calcChars(uint lol)
@@ -356,6 +645,7 @@ namespace OS_lab4
             bool ifexecute = (kek & 0x20000000) != 0;
             bool ifread = (kek & 0x40000000) != 0;
             bool ifwrite = (kek & 0x80000000) != 0;
+            //TODO: add data bounderies (align)
             String res = "Section characteristics: ";
             if (ifcode)
             {
@@ -420,7 +710,119 @@ namespace OS_lab4
             Array.Reverse(arr);
             return arr;
         }
-    }
+
+        static void calcSymbols()
+        {
+            //TODO:FIX SOME ISSUES WITH CALCULATING check mircrosoft website
+            if (!hassymbols)
+            {
+                Console.WriteLine("SYMBOL TABLE: No symbols");
+            }
+            else
+            {
+                Console.WriteLine("Symbol table: ");
+                for (int i = 0; i < SymbolTables.Length; i++)
+                {
+                    var cur = SymbolTables[i];
+                    Console.WriteLine("Name: " + Encoding.Default.GetString(cur.Name) + ", Value: " + cur.Value + 
+                                      ", Section Number: " + cur.SectionNumber + ", Type: " + cur.Type + 
+                                      ", Storage Class: " + cur.StorageClass + ", NumberOfAuxSymbols: " + cur.NumberOfAuxSymbols);
+                }
+            }
+        }
+        static void calcImportExportInfo()
+        {
+            //TODO: ADD IMPORT EXPORT INFO CALCULATION
+        }
+        
+        ///here are methods for recalculating RAW offset
+        static int defSection(uint rva)
+        {
+            for (int i = 0; i < sectionHeaders.Length; ++i)
+            {
+                uint start = sectionHeaders[i].VirtualAddress;
+                uint end = start + ALIGN_UP(sectionHeaders[i].VirtualSize, alingment);
+
+                if(rva >= start && rva < end)
+                    return i;
+            }
+            return -1;
+        }
+
+        static uint ALIGN_UP(uint x, uint align)
+        {
+            if ((x & (align - 1)) == 1)
+            {
+                return ALIGN_DOWN(x, align) + align;
+            }
+            else
+            {
+                return x;
+            }
+            
+        }
+
+        static uint ALIGN_DOWN(uint x, uint align)
+        {
+            return (x & ~(align - 1));
+        } 
+        static uint rvaToOff(uint rva)
+        {
+            long indexSection = defSection(rva);
+            if(indexSection != -1)
+                return rva - sectionHeaders[indexSection].VirtualAddress + sectionHeaders[indexSection].PointerToRawData;
+            else
+                return 0;
+        }
+        
+        //rvaToRAW methods ended
+
+        /* do I need this code?
+        static void calcBaseRelocation()
+        {
+            Console.WriteLine("Base relocations(.reloc): ");
+            for (int i = 0; i < baseRelocationBlocks.Count; i++)
+            {
+                var cur = baseRelocationBlocks[i];
+                Console.WriteLine("Virtual Address: " + cur.PageRVA + " Chunk Size: " + cur.BlockSize + " Number of fixups: " + cur.entries.Length);
+                for (int j = 0; j < cur.entries.Length; j++)
+                {
+                    Console.Write("reloc: " + j + "offset: ");
+                    var type = (cur.entries[j] & 1111000000000000);
+                    Console.Write(cur.entries[j] & 0000111111111111);
+                    switch (type)
+                    {
+                        case 0: Console.WriteLine(" BASED_ABSOLUTE");
+                            break;
+                        case 1: Console.WriteLine(" BASED_HIGH");
+                            break;
+                        case 2: Console.WriteLine(" BASED_LOW");
+                            break;
+                        case 3: Console.WriteLine(" BASED_HIGHLOW");
+                            break;
+                        case 4: Console.WriteLine(" BASED_HIGHADJ");
+                            break;
+                        case 5: Console.WriteLine(" BASED_ARM_MOV32");
+                            break;
+                        case 7: Console.WriteLine(" BASED_RISCV_LOW12I");
+                            break;
+                        case 8: Console.WriteLine(" BASED_RISCV_LOW12S");
+                            break;
+                        case 9: Console.WriteLine(" BASED_MIPS_JMPADDR16");
+                            break;
+                        case 10: Console.WriteLine(" BASED_DIR64");
+                            break;
+                    }
+                    break; //debug
+                }
+
+                break; //debug
+                
+            }
+            */
+            
+        }
+    
 
     class FileHeader
     {
@@ -523,6 +925,38 @@ namespace OS_lab4
         public ushort NumberOfLinenumbers;
         public uint Characteristics;
 
+    }
+
+    class SymbolTable
+    {
+        public byte[] Name;
+        public uint Value;
+        public short SectionNumber;
+        public ushort Type;
+        public byte StorageClass;
+        public byte NumberOfAuxSymbols;
+    }
+
+    class BaseRelocationBlock
+    {
+        public uint PageRVA;
+        public uint BlockSize;
+        public ushort[] entries;
+    }
+
+    class ExportDirectory
+    {
+        public uint Characteristics;
+        public uint TimeDateStamp;
+        public ushort MajorVersion;
+        public ushort MinorVersion;
+        public uint Name;
+        public uint Base;
+        public uint NumberOfFunctions;
+        public uint NumberOfNames;
+        public uint AddressOfFunctions;
+        public uint AddressOfNames;
+        public uint AddressOfNameOrdinals;
     }
 
     class SomethingWentWrongException : Exception
